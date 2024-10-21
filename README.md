@@ -46,7 +46,7 @@ pip install .
 ### Setting up a dataset
 For training a FLIM network you need to provide the training images and markers, no pixel-wise ground-truth is necessary. The markers can either be marker images (with zeros on non-marker pixels and a semantic label on the marker-pixels) or .txt files (example in tests/example_marker_file.txt).
 
-You can use any annotation tool to create the marker images. To create the marker files, you can check the other tools from LIDS lab: [FLIMBuilder](https://github.com/LIDS-UNICAMP/FLIM-Builder) and [MISe](https://github.com/LIDS-UNICAMP/MISe).
+You can use any annotation tool to create the marker images. To create the marker files, you can check the other tools from LIDS lab: [FLIMBuilder](https://github.com/LIDS-UNICAMP/FLIMBuilder) and [MISe](https://github.com/LIDS-UNICAMP/MISe).
 
 If the code can't find a marker file with the same base name as the original image, the image will not be used during training.
 
