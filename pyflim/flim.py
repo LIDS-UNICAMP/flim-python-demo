@@ -17,7 +17,7 @@ import torch.nn as nn
 import math
 
 class FLIMModel(nn.Module):
-    def __init__(self, architecture, learning_rate=1.0, adaptation_function="robust_weights", device="cpu", filter_by_size=False, use_bias=False, track_gpu_stats=False, network_type="regular", dilation_values=None):
+    def __init__(self, architecture, learning_rate=1.0, adaptation_function="robust_weights", device="cpu", filter_by_size=False, use_bias=False, track_gpu_stats=False, network_type="regular", dilation_values=None, **kwargs):
         torch.set_grad_enabled(False)
         super(FLIMModel,self).__init__()
         self.layers = nn.ModuleList()
@@ -36,7 +36,7 @@ class FLIMModel(nn.Module):
             self.kmeans = FLIMModel.cluster_patches_faiss
         self.normalization = FLIMModel.marker_based_normalization
         decoder_input_size = architecture.layers[self.architecture.nlayers-1]["noutput_channels"]
-        self.decoder = layers.FLIMAdaptiveDecoderLayer(decoder_input_size, adaptation_function=adaptation_function, filter_by_size=filter_by_size, device=device)
+        self.decoder = layers.FLIMAdaptiveDecoderLayer(decoder_input_size, adaptation_function=adaptation_function, filter_by_size=filter_by_size, device=device, **kwargs)
         self.device = device
         self.to(device)
         self.track_gpu_stats = track_gpu_stats
