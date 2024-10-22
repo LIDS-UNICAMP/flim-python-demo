@@ -179,7 +179,7 @@ class FLIMModel(nn.Module):
                 bias_ = (-1)*mean_shifted.sum(axis=(1,2,3))
             weights = torch.from_numpy(kernels).permute(0,3,2,1).float().to(self.device)
             
-            self.layers[l].marker_labels = (np.array(selected_kernels_labels)-1).reshape(-1)
+            self.layers[l].marker_labels = torch.Tensor((np.array(selected_kernels_labels)-1).reshape(-1))
             if(self.network_type == "dseparable_mw"):
                 shape_vector = weights.shape
                 depth_wise_kernel = weights.mean(axis=0).unsqueeze(axis=1).to(self.device)
@@ -283,6 +283,8 @@ class FLIMModel(nn.Module):
                 mean_shifted[:,:,:,i]*=mean
             bias_ = (-1)*mean_shifted.sum(axis=(1,2,3))
         weights = torch.from_numpy(kernels).permute(0,3,2,1).float()
+        
+        self.layers[l].marker_labels = torch.Tensor((np.array(selected_kernels_labels)-1).reshape(-1))
         if(self.network_type == "dseparable_sw" or self.network_type == "separable"):
             shape_vector = weights.shape
             depth_wise_kernel = weights.mean(axis=0).unsqueeze(axis=1).to(self.device)
@@ -415,7 +417,7 @@ class FLIMModel(nn.Module):
                 for l in range(self.architecture.nlayers):
                     self.layers[l].conv.weight.to(self.device)
                     self.layers[l].conv.to(self.device)
-    def run(self, dataset, output_folder=None):
+    def run(self, dataset, output_folder=None, decoder_layer=-1):
         if not os.path.exists(output_folder): 
             os.makedirs(output_folder) 
         if(isinstance(dataset, DataLoader)):
@@ -423,7 +425,7 @@ class FLIMModel(nn.Module):
             image_files = None
             for sample_batch in dataset:
                 X = sample_batch["image"].float().to(self.device)
-                Y = self.forward(X)
+                Y = self.forward(X, self.layers[decoder_layer].marker_labels.clone(), decoder_layer)
                 del X
                 original_sizes = sample_batch['original_size']
                 image_paths = sample_batch["image_path"]
@@ -441,7 +443,7 @@ class FLIMModel(nn.Module):
             for sample in dataset:
                 X = sample["image"].to(self.device)
                 original_size = sample["original_size"]
-                y = self.forward(X.unsqueeze(0))
+                y = self.forward(X.unsqueeze(0), self.layers[decoder_layer].marker_labels.clone(), decoder_layer)
                 out_size = y.shape[-2:]
                 if(out_size[0] != original_size[0] or out_size[1] != original_size[1]):
                     y = F.interpolate(y, [original_size[0], original_size[1]], mode='bilinear', align_corners=True)
@@ -456,9 +458,10 @@ class FLIMModel(nn.Module):
                 del X
                 del saliency
     
-    def forward(self, X):
+    def forward(self, X, marker_labels=None, decoder_layer=-1):
         original_size = (X.shape[-2:])
         gpu_tracker = util.MemTracker()
+        decoder_layer = self.architecture.nlayers - 1 if decoder_layer >=0 else decoder_layer
         for l in range(self.architecture.nlayers):
             if(not self.use_bias):
                 X = self.normalization(X, self.layers[l].normalization_parameters)
@@ -468,7 +471,11 @@ class FLIMModel(nn.Module):
             if(self.track_gpu_stats):
                 if self.max_gpu_usage < gpu_tracker.track():
                     self.max_gpu_usage = gpu_tracker.track()
-        y = self.decoder(X, original_size)
+            if(l == decoder_layer):
+                y = self.decoder(X, original_size, marker_labels)
+
+        if(decoder_layer == -1):
+            y = self.decoder(X, original_size, marker_labels)
         return y
         
     def find_marker_norm_parameters(X, M, kernel_size=[3,3], std_factor=0.01, dilation_rate=1):

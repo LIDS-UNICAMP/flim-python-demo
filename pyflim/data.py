@@ -230,7 +230,7 @@ class FLIMData(Dataset):
         markers, image_size = FLIMData.read_image_markers(marker_file)
         marker_image = np.zeros((image_size[0], image_size[1]))
         for m in markers:
-            marker_image[m[0], m[1]] = m[2]+1
+            marker_image[m[0], m[1]] = m[2]#+1
         return marker_image
 
     def label_markers_by_component(marker_image):

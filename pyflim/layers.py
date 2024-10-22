@@ -433,6 +433,7 @@ class FLIMLayer(torch.nn.Module):
         torch.manual_seed(seed)
         self.device = device
         self.normalization_parameters = dict()
+        self.marker_labels = torch.Tensor()
         if(network_type == "regular"):
             self.conv = Conv2d(in_channels=layer_parameters["ninput_channels"], out_channels=layer_parameters["noutput_channels"], 
                            kernel_size=layer_parameters["kernel_size"], stride=1, 
@@ -574,7 +575,7 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         if(self.decoder_type == "vanilla_adaptive_decoder"):
             return self.vanilla_adaptive_decoder(feature, original_size, weights)
         elif(self.decoder_type == "decoder_2"):
-            return self.adaptive_decoder2(feature, original_size, weights, **self.kwargs)
+            return self.adaptive_decoder2(feature, original_size=original_size, marker_labels=weights, **self.kwargs)
 
     def vanilla_adaptive_decoder(self, feature, original_size = None, weights = None):
         if(original_size != None):
