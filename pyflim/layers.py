@@ -10,6 +10,7 @@ from skimage.filters import threshold_otsu
 from skimage import io, transform
 from PIL import Image
 from pyflim import util
+from skimage.util import view_as_windows
 
 class SeparableConvolution(torch.nn.Module):
     def __init__(self, in_channels, out_channels, kernel_size, padding_mode='reflect', stride=1, d=1):
