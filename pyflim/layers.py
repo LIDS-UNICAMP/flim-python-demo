@@ -505,6 +505,12 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
                 elif(max_ != 0.0):
                     feature[b,:,:] = 1 * ((feature[b,:,:] - min_) / (max_))
     
+    def circular_mask(self, radius):
+        radius = int(radius)
+        y, x = np.ogrid[-radius:radius+1, -radius:radius+1]
+        mask = x**2 + y**2 <= radius**2
+        return mask.astype(float)
+
     def normalize_by_band_max(feature):
         if(len(feature.shape) == 4):
             for im in range(feature.shape[0]):
