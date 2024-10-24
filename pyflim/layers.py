@@ -574,7 +574,7 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
 
     def forward(self, feature, original_size = None, weights = None):
         if(self.decoder_type == "vanilla_adaptive_decoder"):
-            return self.vanilla_adaptive_decoder(feature, original_size, weights)
+            return self.vanilla_adaptive_decoder(feature, original_size)
         elif(self.decoder_type == "decoder_2"):
             return self.adaptive_decoder2(feature, original_size=original_size, marker_labels=weights, **self.kwargs)
 
