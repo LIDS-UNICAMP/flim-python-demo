@@ -574,9 +574,11 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
 
     def forward(self, feature, original_size = None, weights = None):
         if(self.decoder_type == "vanilla_adaptive_decoder"):
-            return self.vanilla_adaptive_decoder(feature, original_size, weights)
+            return self.vanilla_adaptive_decoder(feature, original_size)
         elif(self.decoder_type == "decoder_2"):
             return self.adaptive_decoder2(feature, original_size=original_size, marker_labels=weights, **self.kwargs)
+        elif(self.decoder_type == "decoder_3"):
+            return self.adaptive_decoder3(feature, original_size=original_size, marker_labels=weights, **self.kwargs)    
 
     def vanilla_adaptive_decoder(self, feature, original_size = None, weights = None):
         if(original_size != None):
@@ -661,6 +663,69 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         weights_ = weights[(marker_labels==0),:,:]
         weights_[(P0[(marker_labels==0),:,:] < P1[(marker_labels==0),:,:])] = -1
         weights_[(P0[(marker_labels==0),:,:] >= P1[(marker_labels==0),:,:])] = 0
+        weights[(marker_labels==0),:,:] = weights_
+
+        interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
+
+        salie = (np.multiply(interp_feature_array[0,:,:,:], weights)).sum(axis=0)
+        
+        salie = FLIMAdaptiveDecoderLayer.relu(salie)
+
+        if(salie.max()-salie.min() != 0.0):
+            salie = (salie - salie.min()) / (salie.max() - salie.min())
+        elif(salie.max() != 0):
+            salie = (salie - salie.min()) / (salie.max())
+        
+        del interp_feature_array
+        
+        if(original_size!=None):
+            salie = F.interpolate(torch.tensor(salie).unsqueeze(0).unsqueeze(0), [original_size[0], original_size[1]],mode='bilinear',align_corners=True)
+            salie = salie.numpy()
+        
+        if(self.filter_by_size):
+            util.filter_component_by_area(salie, self.filter_by_size)
+        
+        return torch.from_numpy(salie*255.0)
+
+    def adaptive_decoder3(self, feature, original_size = None, marker_labels = None, **kwargs):
+        interp_feature_array = feature.cpu().detach().numpy()
+        FLIMAdaptiveDecoderLayer.normalize_by_band_max(interp_feature_array)
+        adj_radius = kwargs.get('adj_radius')
+
+        if(not adj_radius):
+            adj_radius = 1.5
+        
+        r = int(adj_radius)
+
+        weights = np.zeros(feature.shape[1:])
+        interp_feature_array = np.pad(interp_feature_array, ((0,0),(0,0),(r,r),(r,r)))
+        mask = self.circular_mask(adj_radius)
+        mask_size = mask.sum()
+        mask_shape = mask.shape[0]
+        mask = mask.reshape((1,1,1,mask.shape[0],mask.shape[0]))
+        background_weights = int((marker_labels==0).sum())
+        foreground_weights = int((marker_labels==1).sum())
+
+        if(foreground_weights != 0):   
+            window_0 = view_as_windows(interp_feature_array[0,(marker_labels==1),:,:], (foreground_weights, mask_shape,mask_shape))[0]
+            #circular adjacency
+            window_0 = window_0 * mask
+            sum = np.sum(window_0, axis=(2,3,4))
+            mean_0 = sum/(foreground_weights*mask_size)
+        
+        if(background_weights != 0):
+            window_1 = view_as_windows(interp_feature_array[0,(marker_labels==0),:,:], (background_weights, mask_shape,mask_shape))[0]
+            #circular adjancency
+            window_1 = window_1 * mask
+            sum = np.sum(window_1, axis=(2,3,4))
+            mean_1 = sum/(background_weights*mask_size)
+
+        weights_ = weights[(marker_labels==1),:,:]
+        weights_[:,((mean_0) > mean_1)] = 1
+        weights[(marker_labels==1),:,:] = weights_
+
+        weights_ = weights[(marker_labels==0),:,:]
+        weights_[:,(mean_0 < (mean_1))] = -1
         weights[(marker_labels==0),:,:] = weights_
 
         interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
