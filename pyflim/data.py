@@ -4,12 +4,18 @@ from torchvision import transforms, utils
 from skimage import io, transform
 from skimage import color
 from skimage import measure
+import torchvision.transforms.functional as F
 import torch
 import numpy as np
 from pyflim import util
+from PIL import Image
+import torch
+import random
+import torchvision.transforms as T
+import torchvision.transforms.functional as TF
 
 class FLIMData(Dataset):
-    def __init__(self, orig_folder, marker_folder=None, images_list=None, test_images_list=None, label_folder=None, orig_ext=".png", marker_ext="-seeds.txt", label_ext=".png",transform=None, bits=8):
+    def __init__(self, orig_folder, marker_folder=None, images_list=None, lab_norm=True, label_folder=None, orig_ext=".png", marker_ext="-seeds.txt", label_ext=".png",transform=None, bits=8, convert_gray_to_lab=False):
         """
         Arguments:
             orig_folder (string): Path to the folder with the original images.
@@ -25,6 +31,7 @@ class FLIMData(Dataset):
         self.marker_folder = marker_folder
         self.orig_folder = orig_folder
         self.label_folder = label_folder
+        self.lab_norm = lab_norm
 
         if(marker_folder is not None):
             self.mode = "train"
@@ -34,12 +41,12 @@ class FLIMData(Dataset):
             self.file_list = FLIMData.get_file_list(images_list)
         else:
             self.file_list = util.readAllFilesFromFolder(orig_folder, orig_ext)
-
+        
         if(self.mode == "train"):
             self.file_list = FLIMData.filter_from_folder(self.file_list, marker_folder, marker_ext)
-            
-        assert len(self.file_list) >= 1, "No training images were loaded"
         
+        assert len(self.file_list) >= 1, "No training images were loaded"
+        self.file_list = sorted(self.file_list)
         self.orig_ext = orig_ext
         self.marker_ext = marker_ext
         self.label_ext = label_ext
@@ -48,6 +55,8 @@ class FLIMData(Dataset):
             self.batchable = False
         self.results = []
         self.ctb = self.get_blue_to_red_color_table(bits=bits)
+        self.bits=bits
+        self.convert_gray_to_lab=convert_gray_to_lab
 
     def test(self):
         self.mode = "test"
@@ -91,7 +100,10 @@ class FLIMData(Dataset):
             return (841.0 / 108.0) * (x) + (4.0 / 29.0)
     
     def image_to_lab(image):
-        return FLIMData._image_to_lab(image)      
+        return FLIMData._image_to_lab(image)
+
+    def image_to_lab_norm(image):
+        return FLIMData._image_to_lab_norm(image)      
     
     def get_blue_to_red_color_table(self, bits):
         n_colors=2**bits
@@ -150,30 +162,36 @@ class FLIMData(Dataset):
         new_image[:, :, 1] = 500 * (X - Y)
         new_image[:, :, 2] = 200 * (Y - Z)
     
-        # new_image = rgb2lab(image)
-    
+        return new_image
+
+    def _image_to_lab_norm(image):
+        new_image = FLIMData._image_to_lab(image)
+
         new_image[:, :, 0] = new_image[:, :, 0] / 99.998337
         new_image[:, :, 1] = (new_image[:, :, 1] + 86.182236) / (86.182236 + 98.258614)
         new_image[:, :, 2] = (new_image[:, :, 2] + 107.867744) / (107.867744 + 94.481682)
-    
-        return new_image
 
+        return new_image
     def __len__(self):
         return len(self.file_list)
 
     def __getitem__(self, idx):
         if torch.is_tensor(idx):
             idx = idx.tolist()
-
+            
         image_path = os.path.join(self.orig_folder,self.file_list[idx])
         if(len(image_path.split(".")) == 1):
             image_path+=self.orig_ext
         
         image_data = io.imread(image_path)
-        if len(image_data.shape) == 2:
+        if (len(image_data.shape) == 2 and self.convert_gray_to_lab):
             image_data = self.gray_to_colored(image_data)
-        
-        image = FLIMData.image_to_lab(image_data)
+            image = FLIMData.image_to_lab_norm(image_data) if self.lab_norm else FLIMData.image_to_lab(image_data)
+        elif(len(image_data.shape) == 3):
+            image = FLIMData.image_to_lab_norm(image_data) if self.lab_norm else FLIMData.image_to_lab(image_data)
+        else:
+            image = np.expand_dims(image_data, 2).astype(np.float32)
+
         original_size = np.array(image.shape)
 
         marker_label_image = None

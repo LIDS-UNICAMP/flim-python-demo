@@ -6,19 +6,20 @@ install_deps = [
         "torch",
         "torchvision",
         "pillow",
-        "numpy<2.0",
+        "numpy",
         "matplotlib",
         "setuptools",
         "scikit-image",
         "scikit-learn",
+        "faiss-cpu"
     ]
 
-gpu_available=False
-try:
-    subprocess.check_output('nvidia-smi')
-    install_deps.append('faiss-gpu')
-except Exception: # this command not being found can raise quite a few different errors depending on the configuration
-    install_deps.append('faiss-cpu')
+#gpu_available=False
+# try:
+#     subprocess.check_output('nvidia-smi')
+#     install_deps.append('faiss-gpu')
+# except Exception: # this command not being found can raise quite a few different errors depending on the configuration
+#     install_deps.append('faiss-cpu')
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
