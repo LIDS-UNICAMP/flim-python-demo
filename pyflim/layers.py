@@ -608,19 +608,24 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
 
         return torch.from_numpy(y*255)
 
+    def view_as_windows_pytorch(self, image, shape, stride=None):
+        windows = image.unfold(1, shape[0], stride[0])
+        return windows.unfold(2, shape[1], stride[1])
+
     def adaptive_decoder2(self, feature, original_size = None, marker_labels = None, **kwargs):
-        interp_feature_array = feature.cpu().detach().numpy()
+        marker_labels=marker_labels
+        interp_feature_array = feature.detach()
         FLIMAdaptiveDecoderLayer.normalize_by_band_max(interp_feature_array)
         adj_radius = kwargs.get('adj_radius')
-
-        if(not adj_radius):
+        
+        if(adj_radius == None):
             adj_radius = 1.5
         
         r = int(adj_radius)
 
-        weights = np.zeros(feature.shape[1:])
-        interp_feature_array = np.pad(interp_feature_array, ((0,0),(0,0),(r,r),(r,r)))
-        mask = self.circular_mask(adj_radius)
+        weights = torch.zeros(feature.shape[1:]).to(interp_feature_array.device)
+        interp_feature_array = torch.nn.functional.pad(interp_feature_array, (r,r,r,r))
+        mask = torch.tensor(self.circular_mask(adj_radius)).to(interp_feature_array.device)
         mask_size = mask.sum()
         mask_shape = mask.shape[0]
         mask = mask.reshape((1,1,1,mask.shape[0],mask.shape[0]))
@@ -628,33 +633,33 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         foreground_weights = int((marker_labels==1).sum())
 
         if(foreground_weights != 0):   
-            window_0 = view_as_windows(interp_feature_array[0,(marker_labels==1),:,:], (foreground_weights, mask_shape,mask_shape))[0]
+            window_0 = self.view_as_windows_pytorch(interp_feature_array[0,(marker_labels==1),:,:], (mask_shape,mask_shape), stride=[1,1]).permute((1,2,0,3,4))
+            
             #circular adjacency
             window_0 = window_0 * mask
-            sum = np.sum(window_0, axis=(2,3,4))
+            sum = torch.sum(window_0, axis=(2,3,4), keepdim=True)
             mean_0 = sum/(foreground_weights*mask_size)
-
-            var_0_ = np.sum(np.power((window_0 - np.expand_dims(mean_0,(2,3,4)))*mask,2.0), axis=(2,3,4))
+            
+            var_0_ = torch.sum(torch.pow((window_0 - mean_0) * mask,2.0), axis=(2,3,4))
             var_0 = var_0_/(foreground_weights*mask_size)
             var_0[var_0 < 1e-7] = 1.0
 
-            P0 = np.exp(-np.power(interp_feature_array[:,:,r:-r,r:-r][0,:,:,:] - np.expand_dims(mean_0, 0), 2) / (2.0 * var_0))
-        
-        if(background_weights != 0):
-            window_1 = view_as_windows(interp_feature_array[0,(marker_labels==0),:,:], (background_weights, mask_shape,mask_shape))[0]
-            #circular adjancency
-            window_1 = window_1 * mask
-            sum = np.sum(window_1, axis=(2,3,4))
-            mean_1 = sum/(background_weights*mask_size)
+            P0 = torch.exp(-torch.pow(interp_feature_array[:,:,r:-r,r:-r][0,:,:,:] - mean_0.squeeze().unsqueeze(0), 2) / (2.0 * var_0))
             
-            var_1_ = np.sum(np.power((window_1 - np.expand_dims(mean_1,(2,3,4)))*mask,2.0), axis=(2,3,4))
+        if(background_weights != 0):
+            window_1 = self.view_as_windows_pytorch(interp_feature_array[0,(marker_labels==0),:,:], (mask_shape,mask_shape), stride=[1,1]).permute((1,2,0,3,4))
+            
+            #circular adjacency
+            window_1 = window_1 * mask
+            sum = torch.sum(window_1, axis=(2,3,4), keepdim=True)
+            mean_1 = sum/(background_weights*mask_size)
+
+            var_1_ = torch.sum(torch.pow((window_1 - mean_1) * mask,2.0), axis=(2,3,4))
             var_1 = var_1_/(background_weights*mask_size)
             var_1[var_1 < 1e-7] = 1.0
             
-            P1 = np.exp(-np.power(interp_feature_array[:,:,r:-r,r:-r][0,:,:,:] - np.expand_dims(mean_1, 0), 2) / (2.0 * var_1))
-        else:    
-            mean_0 = 0.0
-    
+            P1 = torch.exp(-torch.pow(interp_feature_array[:,:,r:-r,r:-r][0,:,:,:] - mean_1.squeeze().unsqueeze(0), 2) / (2.0 * var_1))
+            
         weights_ = weights[(marker_labels==1),:,:]
         weights_[(P0[(marker_labels==1),:,:] > P1[(marker_labels==1),:,:])] = 1
         weights_[(P0[(marker_labels==1),:,:] <= P1[(marker_labels==1),:,:])] = 0
@@ -664,10 +669,11 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         weights_[(P0[(marker_labels==0),:,:] < P1[(marker_labels==0),:,:])] = -1
         weights_[(P0[(marker_labels==0),:,:] >= P1[(marker_labels==0),:,:])] = 0
         weights[(marker_labels==0),:,:] = weights_
-
-        interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
-
-        salie = (np.multiply(interp_feature_array[0,:,:,:], weights)).sum(axis=0)
+        
+        if(r  > 0):
+            interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
+        
+        salie = (interp_feature_array[0,:,:,:] * weights).sum(axis=0)
         
         salie = FLIMAdaptiveDecoderLayer.relu(salie)
 
@@ -679,27 +685,27 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         del interp_feature_array
         
         if(original_size!=None):
-            salie = F.interpolate(torch.tensor(salie).unsqueeze(0).unsqueeze(0), [original_size[0], original_size[1]],mode='bilinear',align_corners=True)
-            salie = salie.numpy()
-        
+            salie = F.interpolate(salie.unsqueeze(0).unsqueeze(0), [original_size[0], original_size[1]],mode='bilinear',align_corners=True)
+            
         if(self.filter_by_size):
             util.filter_component_by_area(salie, self.filter_by_size)
         
-        return torch.from_numpy(salie*255.0)
-
+        return salie * 255.0
+    
     def adaptive_decoder3(self, feature, original_size = None, marker_labels = None, **kwargs):
-        interp_feature_array = feature.cpu().detach().numpy()
+        marker_labels=marker_labels
+        interp_feature_array = feature.detach()
         FLIMAdaptiveDecoderLayer.normalize_by_band_max(interp_feature_array)
         adj_radius = kwargs.get('adj_radius')
-
-        if(not adj_radius):
+        
+        if(adj_radius == None):
             adj_radius = 1.5
         
         r = int(adj_radius)
-
-        weights = np.zeros(feature.shape[1:])
-        interp_feature_array = np.pad(interp_feature_array, ((0,0),(0,0),(r,r),(r,r)))
-        mask = self.circular_mask(adj_radius)
+        
+        weights = torch.zeros(feature.shape[1:]).to(interp_feature_array.device)
+        interp_feature_array = torch.nn.functional.pad(interp_feature_array, (r,r,r,r))
+        mask = torch.tensor(self.circular_mask(adj_radius)).to(interp_feature_array.device)
         mask_size = mask.sum()
         mask_shape = mask.shape[0]
         mask = mask.reshape((1,1,1,mask.shape[0],mask.shape[0]))
@@ -707,17 +713,18 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         foreground_weights = int((marker_labels==1).sum())
 
         if(foreground_weights != 0):   
-            window_0 = view_as_windows(interp_feature_array[0,(marker_labels==1),:,:], (foreground_weights, mask_shape,mask_shape))[0]
+            window_0 = self.view_as_windows_pytorch(interp_feature_array[0,(marker_labels==1),:,:], (mask_shape,mask_shape), stride=[1,1]).permute((1,2,0,3,4))
+            
             #circular adjacency
             window_0 = window_0 * mask
-            sum = np.sum(window_0, axis=(2,3,4))
+            sum = torch.sum(window_0, dim=(2,3,4))
             mean_0 = sum/(foreground_weights*mask_size)
-        
+                    
         if(background_weights != 0):
-            window_1 = view_as_windows(interp_feature_array[0,(marker_labels==0),:,:], (background_weights, mask_shape,mask_shape))[0]
-            #circular adjancency
+            window_1 = self.view_as_windows_pytorch(interp_feature_array[0,(marker_labels==0),:,:], (mask_shape,mask_shape), stride=[1,1]).permute((1,2,0,3,4))
+            #circular adjacency
             window_1 = window_1 * mask
-            sum = np.sum(window_1, axis=(2,3,4))
+            sum = torch.sum(window_1, dim=(2,3,4))
             mean_1 = sum/(background_weights*mask_size)
 
         weights_ = weights[(marker_labels==1),:,:]
@@ -728,9 +735,10 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         weights_[:,(mean_0 < (mean_1))] = -1
         weights[(marker_labels==0),:,:] = weights_
 
-        interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
+        if(r  > 0):
+            interp_feature_array = interp_feature_array[:,:,r:-r,r:-r]
 
-        salie = (np.multiply(interp_feature_array[0,:,:,:], weights)).sum(axis=0)
+        salie = (interp_feature_array[0,:,:,:] * weights).sum(dim=0)
         
         salie = FLIMAdaptiveDecoderLayer.relu(salie)
 
@@ -742,15 +750,13 @@ class FLIMAdaptiveDecoderLayer(torch.nn.Module):
         del interp_feature_array
         
         if(original_size!=None):
-            salie = F.interpolate(torch.tensor(salie).unsqueeze(0).unsqueeze(0), [original_size[0], original_size[1]],mode='bilinear',align_corners=True)
-            salie = salie.numpy()
+            salie = F.interpolate(salie.unsqueeze(0).unsqueeze(0), [original_size[0], original_size[1]],mode='bilinear',align_corners=True)
         
         if(self.filter_by_size):
             util.filter_component_by_area(salie, self.filter_by_size)
         
-        return torch.from_numpy(salie*255.0)
-
+        return salie * 255.0
+       
     def relu(image):
-        activation_image = np.copy(image)
-        activation_image[activation_image < 0] = 0
-        return activation_image
+        image[image < 0] = 0
+        return image

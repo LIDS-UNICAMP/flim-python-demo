@@ -458,10 +458,11 @@ class FLIMModel(nn.Module):
                 del X
                 del saliency
     
-    def forward(self, X, marker_labels=None, decoder_layer=-1):
+    def forward(self, X, decoder_layer=None):
         original_size = (X.shape[-2:])
         gpu_tracker = util.MemTracker()
-        decoder_layer = self.architecture.nlayers - 1 if decoder_layer >=0 else decoder_layer
+        decoder_layer = self.architecture.nlayers - 1 if decoder_layer == None else decoder_layer
+        y = None
         for l in range(self.architecture.nlayers):
             if(not self.use_bias):
                 X = self.normalization(X, self.layers[l].normalization_parameters)
@@ -472,10 +473,8 @@ class FLIMModel(nn.Module):
                 if self.max_gpu_usage < gpu_tracker.track():
                     self.max_gpu_usage = gpu_tracker.track()
             if(l == decoder_layer):
-                y = self.decoder(X, original_size, marker_labels)
-
-        if(decoder_layer == -1):
-            y = self.decoder(X, original_size, marker_labels)
+                y = self.decoder(X.detach().clone(), original_size, self.layers[l].marker_labels.detach().clone())
+                break
         return y
         
     def find_marker_norm_parameters(X, M, kernel_size=[3,3], std_factor=0.01, dilation_rate=1):
